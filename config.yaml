@@ -8,8 +8,8 @@ image_type: "PAUSradial-pair"   # or "PAUSrect-pair"
 image_size: [512, 512]
 in_channels: 1                  # 1=grayscale, 3=force_3chan
 target_type: "response"         # "response" (binary) | "pathology" (T,TRG)
-val_fraction: 0.15
-test_fraction: 0.15
+val_fraction: 0.25
+test_fraction: 0.10
 batch_size: 16
 num_workers: 4
 

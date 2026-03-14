@@ -524,14 +524,14 @@ def main():
     if args.pa_ckpt:
         ckpt = torch.load(args.pa_ckpt, map_location="cpu", weights_only=False)
         model.encoder_pair.pa_encoder.load_state_dict(
-            ckpt["encoder_state_dict"]
+            ckpt["encoder_state_dict"], strict=False
         )
         print(f"✓ Loaded PA encoder from {args.pa_ckpt}")
 
     if args.us_ckpt:
         ckpt = torch.load(args.us_ckpt, map_location="cpu", weights_only=False)
         model.encoder_pair.us_encoder.load_state_dict(
-            ckpt["encoder_state_dict"]
+            ckpt["encoder_state_dict"], strict=False
         )
         print(f"✓ Loaded US encoder from {args.us_ckpt}")
 
