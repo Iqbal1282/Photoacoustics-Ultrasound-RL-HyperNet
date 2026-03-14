@@ -555,30 +555,15 @@ def create_normalised_dataloaders(
 
     stats, fallback = load_stats(stats_path)
 
-    rng = random.Random(seed)
-    np.random.seed(seed)
+    df = pd.read_csv(csv_path)
 
-    df   = pd.read_csv(csv_path)
-    pids = sorted(df["pid"].unique().tolist())
-    rng.shuffle(pids)
+    from dataset import stratified_patient_split
+    train_df, val_df, test_df = stratified_patient_split(
+        df, val_fraction=val_fraction, test_fraction=test_fraction, seed=seed,
+    )
 
-    n_test = max(1, int(len(pids) * test_fraction))
-    n_val  = max(1, int(len(pids) * val_fraction))
-
-    test_pids  = set(pids[:n_test])
-    val_pids   = set(pids[n_test:n_test + n_val])
-    train_pids = set(pids[n_test + n_val:])
-
-    train_df = df[df["pid"].isin(train_pids)].reset_index(drop=True)
-    val_df   = df[df["pid"].isin(val_pids)].reset_index(drop=True)
-    test_df  = df[df["pid"].isin(test_pids)].reset_index(drop=True)
-
-    print(f"Split (patients / scans):")
-    print(f"  Train: {len(train_pids)} / {len(train_df)}")
-    print(f"  Val:   {len(val_pids)} / {len(val_df)}")
-    print(f"  Test:  {len(test_pids)} / {len(test_df)}")
-
-    missing = [p for p in pids if str(p) not in stats]
+    all_pids = df["pid"].unique().tolist()
+    missing = [p for p in all_pids if str(p) not in stats]
     if missing:
         print(f"  [WARN] {len(missing)} patients missing Normal stats "
               f"→ global fallback applied: {missing}")

@@ -415,20 +415,13 @@ def _build_loaders(
     Build train and val DataLoaders, optionally using patient-specific
     Normal-tissue normalisation when normal_stats is provided.
     """
-    df   = pd.read_csv(csv_path)
-    pids = sorted(df["pid"].unique().tolist())
-    random.seed(42)
-    random.shuffle(pids)
+    df = pd.read_csv(csv_path)
 
-    n_val    = max(1, int(len(pids) * val_fraction))
-    val_pids = set(pids[:n_val])
-    trn_pids = set(pids[n_val:])
-
-    train_df = df[df["pid"].isin(trn_pids)].reset_index(drop=True)
-    val_df   = df[df["pid"].isin(val_pids)].reset_index(drop=True)
-
-    print(f"  Train: {len(trn_pids)} patients / {len(train_df)} scans")
-    print(f"  Val:   {len(val_pids)} patients / {len(val_df)} scans")
+    # Use val_fraction for val, 0 for test (encoder training doesn't need test set)
+    from dataset import stratified_patient_split
+    train_df, val_df, _ = stratified_patient_split(
+        df, val_fraction=val_fraction, test_fraction=0.0, seed=42,
+    )
 
     nw = _safe_num_workers(num_workers)
     if nw != num_workers:

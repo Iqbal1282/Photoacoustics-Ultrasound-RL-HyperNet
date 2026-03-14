@@ -152,6 +152,95 @@ class PAUSBScanDataset(Dataset):
         return pa_raw, us_raw, label
 
 
+
+
+# ============================================================================
+# Stratified patient-level split
+# ============================================================================
+
+def stratified_patient_split(
+    df: pd.DataFrame,
+    val_fraction: float = 0.20,
+    test_fraction: float = 0.15,
+    seed: int = 42,
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Split patients into train / val / test while ensuring every split contains
+    BOTH tumor-positive and tumor-negative patients.
+
+    Why this matters:
+        Some patients have ONLY normal scans (pure-Normal patients: 260, 262,
+        263, 264, 265, 277, 278, 281, 286) and others have ONLY tumor scans
+        (270, 282, 284, 285).  A naive random shuffle can put all pure-Normal
+        patients in Val/Test, making the AUC meaningless (val set sees only
+        one class).
+
+    Strategy:
+        1. Classify each patient as:
+               "tumor_only"   → has_tumor always 1
+               "normal_only"  → has_tumor always 0
+               "mixed"        → has both
+        2. Shuffle each group independently with the given seed.
+        3. Take val_fraction and test_fraction from EACH group so every
+           split is guaranteed to contain all three patient types.
+
+    Returns:
+        train_df, val_df, test_df  (all reset_index)
+    """
+    rng = random.Random(seed)
+
+    # Classify patients
+    tumor_only_pids, normal_only_pids, mixed_pids = [], [], []
+    for pid, grp in df.groupby("pid"):
+        has_t = grp["has_tumor"].sum()
+        if has_t == 0:
+            normal_only_pids.append(pid)
+        elif has_t == len(grp):
+            tumor_only_pids.append(pid)
+        else:
+            mixed_pids.append(pid)
+
+    def _split_group(pids_list):
+        pids_list = sorted(pids_list)
+        rng.shuffle(pids_list)
+        n_test = max(1, round(len(pids_list) * test_fraction)) if pids_list else 0
+        n_val  = max(1, round(len(pids_list) * val_fraction))  if pids_list else 0
+        # guard: never take more than available
+        n_test = min(n_test, max(0, len(pids_list) - 2))
+        n_val  = min(n_val,  max(0, len(pids_list) - n_test - 1))
+        return (set(pids_list[n_test + n_val:]),   # train
+                set(pids_list[n_test:n_test+n_val]), # val
+                set(pids_list[:n_test]))             # test
+
+    tr_t, va_t, te_t = _split_group(tumor_only_pids)
+    tr_n, va_n, te_n = _split_group(normal_only_pids)
+    tr_m, va_m, te_m = _split_group(mixed_pids)
+
+    train_pids = tr_t | tr_n | tr_m
+    val_pids   = va_t | va_n | va_m
+    test_pids  = te_t | te_n | te_m
+
+    train_df = df[df["pid"].isin(train_pids)].reset_index(drop=True)
+    val_df   = df[df["pid"].isin(val_pids)].reset_index(drop=True)
+    test_df  = df[df["pid"].isin(test_pids)].reset_index(drop=True)
+
+    def _info(name, pids_set, split_df):
+        t = split_df["has_tumor"].sum()
+        n = (split_df["has_tumor"]==0).sum()
+        to = len([p for p in pids_set if p in set(tumor_only_pids)])
+        no = len([p for p in pids_set if p in set(normal_only_pids)])
+        mx = len([p for p in pids_set if p in set(mixed_pids)])
+        print(f"  {name}: {len(pids_set)} pts ({len(split_df)} scans) | "
+              f"tumor={t} normal={n} | "
+              f"tumor_only_pts={to} normal_only_pts={no} mixed_pts={mx}")
+
+    print("Stratified split summary:")
+    _info("Train", train_pids, train_df)
+    _info("Val  ", val_pids,   val_df)
+    _info("Test ", test_pids,  test_df)
+
+    return train_df, val_df, test_df
+
 # ============================================================================
 # DataLoader factory
 # ============================================================================
@@ -195,25 +284,9 @@ def create_paus_dataloaders(
 
     df = pd.read_csv(csv_path)
 
-    # Patient-level split
-    pids = sorted(df["pid"].unique().tolist())
-    rng.shuffle(pids)
-
-    n_val  = int(len(pids) * val_fraction)
-    n_test = int(len(pids) * test_fraction)
-
-    test_pids  = set(pids[:n_test])
-    val_pids   = set(pids[n_test:n_test + n_val])
-    train_pids = set(pids[n_test + n_val:])
-
-    train_df = df[df["pid"].isin(train_pids)].reset_index(drop=True)
-    val_df   = df[df["pid"].isin(val_pids)].reset_index(drop=True)
-    test_df  = df[df["pid"].isin(test_pids)].reset_index(drop=True)
-
-    print(f"Split summary (patients / B-scans):")
-    print(f"  Train: {len(train_pids)} pts / {len(train_df)} scans")
-    print(f"  Val:   {len(val_pids)} pts / {len(val_df)} scans")
-    print(f"  Test:  {len(test_pids)} pts / {len(test_df)} scans")
+    train_df, val_df, test_df = stratified_patient_split(
+        df, val_fraction=val_fraction, test_fraction=test_fraction, seed=seed,
+    )
 
     # Transforms
     pa_train_tf = get_train_transform(image_size, "PA")

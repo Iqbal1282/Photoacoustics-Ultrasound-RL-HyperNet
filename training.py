@@ -95,29 +95,54 @@ class RLHyperNetTrainer:
         val_loader: DataLoader,
         device: str = "cuda",
         lr: float = 1e-4,
-        beta: float = 0.1,
+        beta: float = 0.05,
+        warmup_epochs: int = 15,
         use_wandb: bool = False,
     ):
         self.model = model.to(device)
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.device = device
-        self.beta = beta
+        self.beta_final    = beta
+        self.beta          = 0.0
+        self.warmup_epochs = warmup_epochs
         self.use_wandb = use_wandb
 
-        # Only update non-encoder parameters
         trainable = [
             {"params": self.model.fusion.parameters(),     "lr": lr},
             {"params": self.model.policy.parameters(),     "lr": lr},
             {"params": self.model.hypernet.parameters(),   "lr": lr},
             {"params": self.model.classifier.parameters(), "lr": lr},
         ]
-        self.optimizer = AdamW(trainable, weight_decay=1e-4)
+        self.optimizer = AdamW(trainable, weight_decay=1e-3)
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=100)
-        self.ce_loss   = nn.CrossEntropyLoss()
+
+        class_weights  = self._compute_class_weights(train_loader, device)
+        self.ce_loss   = nn.CrossEntropyLoss(weight=class_weights,
+                                              label_smoothing=0.1)
+        print(f"  Class weights: Normal={class_weights[0]:.3f}  "
+              f"Tumor={class_weights[1]:.3f}")
+        print(f"  Warm-up (CE only): {warmup_epochs} epochs  "
+              f"then RL beta ramps to {beta}")
 
         self.train_history: List[Dict] = []
         self.val_history:   List[Dict] = []
+
+    @staticmethod
+    def _compute_class_weights(loader, device):
+        try:
+            labels = []
+            for batch in loader:
+                lbl = batch[-1]
+                labels.extend(lbl.tolist() if isinstance(lbl, torch.Tensor) else lbl)
+            labels    = torch.tensor(labels, dtype=torch.long)
+            n_classes = int(labels.max().item()) + 1
+            counts    = torch.bincount(labels, minlength=n_classes).float()
+            weights   = labels.shape[0] / (n_classes * counts.clamp(min=1))
+            return weights.to(device)
+        except Exception as e:
+            print(f"  [WARN] Class weight failed ({e})")
+            return torch.ones(2, device=device)
 
     def _unpack_batch(self, batch):
         pa, us, labels = batch
@@ -154,7 +179,8 @@ class RLHyperNetTrainer:
             tot_rl     += rl_loss.item()
             tot_reward += reward.item()
 
-            preds   = logits.argmax(dim=1)
+            probs_t  = F.softmax(logits, dim=1)[:, 1]
+            preds    = (probs_t >= self.threshold).long()
             correct += (preds == labels).sum().item()
             total   += labels.size(0)
 
@@ -162,6 +188,7 @@ class RLHyperNetTrainer:
                 loss=f"{loss.item():.4f}",
                 acc=f"{100.*correct/total:.1f}%",
                 r=f"{reward.item():.3f}",
+                beta=f"{self.beta:.3f}",
             )
 
         n = len(self.train_loader)
@@ -188,13 +215,14 @@ class RLHyperNetTrainer:
             tot_loss   += self.ce_loss(logits, labels).item()
             tot_reward += compute_reward(logits, labels).item()
 
-            preds   = logits.argmax(dim=1)
+            probs_b = F.softmax(logits, dim=1)[:, 1]
+            preds   = (probs_b >= self.threshold).long()
             correct += (preds == labels).sum().item()
             total   += labels.size(0)
 
             all_preds.extend(preds.cpu().tolist())
             all_labels.extend(labels.cpu().tolist())
-            all_probs.extend(F.softmax(logits, dim=1)[:, 1].cpu().tolist())
+            all_probs.extend(probs_b.cpu().tolist())
 
         # AUC — primary metric for imbalanced data
         try:
@@ -225,7 +253,15 @@ class RLHyperNetTrainer:
             import wandb
 
         for epoch in range(1, num_epochs + 1):
-            print(f"\n{'='*60}\nEpoch {epoch}/{num_epochs}\n{'='*60}")
+            if epoch <= self.warmup_epochs:
+                self.beta = 0.0
+                phase = "warm-up (CE only)"
+            else:
+                ramp = (epoch - self.warmup_epochs) / max(
+                    1, num_epochs - self.warmup_epochs)
+                self.beta = min(self.beta_final, self.beta_final * ramp)
+                phase = f"RL active (beta={self.beta:.4f})"
+            print(f"\n{'='*60}\nEpoch {epoch}/{num_epochs}  [{phase}]\n{'='*60}")
 
             train_m = self.train_epoch(epoch)
             val_m, _, _ = self.validate(epoch)
@@ -367,7 +403,8 @@ class PPOStyleTrainer(RLHyperNetTrainer):
             tot_val    += value_loss.item()
             tot_reward += reward.item()
 
-            preds   = logits.argmax(dim=1)
+            probs_t  = F.softmax(logits, dim=1)[:, 1]
+            preds    = (probs_t >= self.threshold).long()
             correct += (preds == labels).sum().item()
             total   += labels.size(0)
 
@@ -375,6 +412,7 @@ class PPOStyleTrainer(RLHyperNetTrainer):
                 loss=f"{loss.item():.4f}",
                 acc=f"{100.*correct/total:.1f}%",
                 r=f"{reward.item():.3f}",
+                beta=f"{self.beta:.3f}",
             )
 
         n = len(self.train_loader)
@@ -436,7 +474,10 @@ def parse_args():
     # Training
     p.add_argument("--epochs", type=int, default=50)
     p.add_argument("--lr",     type=float, default=1e-4)
-    p.add_argument("--beta",   type=float, default=0.1)
+    p.add_argument("--beta",          type=float, default=0.05,
+                   help="RL loss weight after warm-up (default: 0.05)")
+    p.add_argument("--warmup_epochs", type=int,   default=15,
+                   help="CE-only warm-up epochs before RL is introduced (default: 15)")
     p.add_argument("--use_ppo",        action="store_true")
     p.add_argument("--clip_epsilon",   type=float, default=0.2)
     p.add_argument("--value_coef",     type=float, default=0.5)
@@ -448,6 +489,9 @@ def parse_args():
     p.add_argument("--use_wandb",      action="store_true")
     p.add_argument("--wandb_project",  type=str, default="paus-rl-hypernet")
     p.add_argument("--seed",           type=int, default=42)
+    p.add_argument("--threshold",      type=float, default=0.3,
+                   help="Tumour probability threshold (default: 0.3). "
+                        "Lower = more sensitive to tumour.")
     p.add_argument("--dummy",          action="store_true",
                    help="Use random dummy data (no CSV needed)")
 
@@ -595,6 +639,7 @@ def main():
         device=str(device),
         lr=args.lr,
         beta=args.beta,
+        warmup_epochs=args.warmup_epochs,
         use_wandb=args.use_wandb,
     )
     if args.use_ppo:
@@ -605,6 +650,8 @@ def main():
         )
 
     trainer = trainer_cls(**trainer_kwargs)
+    trainer.threshold = args.threshold
+    print(f"Classification threshold : {args.threshold}")
     trainer.train(num_epochs=args.epochs, save_dir=args.save_dir)
 
     # ── Test evaluation ───────────────────────────────────────────────────
@@ -651,7 +698,7 @@ def main():
         cm = None
         sens_at_90spec = float("nan")
 
-    print(f"\nTest Results:")
+    print(f"\nTest Results (threshold={args.threshold}):")
     print(f"  Accuracy          : {test_acc:.2f}%")
     print(f"  AUC               : {test_auc:.4f}")
     print(f"  F1 (weighted)     : {test_f1:.4f}")
