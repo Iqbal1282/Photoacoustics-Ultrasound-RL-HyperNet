@@ -357,7 +357,7 @@ class EncoderTrainer:
                        config={"modality": self.modality, "mode": self.mode})
 
         monitor_key = ("val/linear_probe_acc" if self.mode == "contrastive"
-                       else "val/accuracy")
+                       else "val/auc")
 
         for epoch in range(1, self.num_epochs + 1):
             if self.mode == "contrastive":
