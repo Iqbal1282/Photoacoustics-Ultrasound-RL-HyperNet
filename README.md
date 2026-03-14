@@ -21,6 +21,18 @@ images from the ARPAM dataset, using the data structures from `dataset.py`.
 
 ## Recommended Workflow
 
+### Step 0 -- Patient Specific Normalization
+```bash
+python normal_normalisation.py ^
+    --data_root data/arpam_roi_select_286_all ^
+    --out data/normal_stats.json
+
+# Dry-run first to verify Normal folders are found
+python normal_normalisation.py ^
+    --data_root data/arpam_roi_select_286_all ^
+    --dry_run
+```
+
 ### Step 1 — Pre-train encoders
 
 Two training modes are available:
@@ -32,14 +44,14 @@ python train_encoders.py \
     --modality PA --mode supervised \
     --csv data/arpam_roi_select_286_all/bscan_dataset.csv \
     --image_type PAUSradial-pair \
-    --in_channels 1 --feat_dim 256 --epochs 50
+    --in_channels 1 --feat_dim 256 --epochs 50 --normal_stats data/normal_stats.json
 
 # US encoder
 python train_encoders.py \
     --modality US --mode supervised \
     --csv data/arpam_roi_select_286_all/bscan_dataset.csv \
     --image_type PAUSradial-pair \
-    --in_channels 1 --feat_dim 256 --epochs 50
+    --in_channels 1 --feat_dim 256 --epochs 50 --normal_stats data/normal_stats.json
 ```
 
 **B) Contrastive pre-training then fine-tune** (better generalisation)
@@ -48,21 +60,21 @@ python train_encoders.py \
 python train_encoders.py \
     --modality PA --mode contrastive \
     --csv data/arpam_roi_select_286_all/bscan_dataset.csv \
-    --image_type PAUSradial-pair --epochs 100
+    --image_type PAUSradial-pair --epochs 100 --normal_stats data/normal_stats.json
 
-python train_encoders.py --modality PA --mode contrastive --csv ~/data/arpam_roi_select_286_all/bscan_dataset.csv --image_type PAUSradial-pair --epochs 100
-python train_encoders.py --modality US --mode contrastive --csv ~/data/arpam_roi_select_286_all/bscan_dataset.csv --image_type PAUSradial-pair --epochs 100
+python train_encoders.py --modality PA --mode contrastive --csv ~/data/arpam_roi_select_286_all/bscan_dataset.csv --image_type PAUSradial-pair --epochs 100 --normal_stats data/normal_stats.json
+python train_encoders.py --modality US --mode contrastive --csv ~/data/arpam_roi_select_286_all/bscan_dataset.csv --image_type PAUSradial-pair --epochs 100 --normal_stats data/normal_stats.json
 
 # Fine-tune with labels
 python train_encoders.py \
     --modality PA --mode supervised \
     --csv data/arpam_roi_select_286_all/bscan_dataset.csv \
     --image_type PAUSradial-pair --epochs 20 \
-    --resume checkpoints/PA_encoder_contrastive_best.pth
+    --resume checkpoints/PA_encoder_contrastive_best.pth --normal_stats data/normal_stats.json
 
-python train_encoders.py --modality PA --mode supervised  --csv data/arpam_roi_select_286_all/bscan_dataset.csv   --image_type PAUSradial-pair --epochs 20 --resume checkpoints/PA_encoder_contrastive_best.pth
+python train_encoders.py --modality PA --mode supervised  --csv data/arpam_roi_select_286_all/bscan_dataset.csv   --image_type PAUSradial-pair --epochs 20 --resume checkpoints/PA_encoder_contrastive_best.pth --normal_stats data/normal_stats.json
 
-python train_encoders.py --modality PA --mode supervised  --csv data/arpam_roi_select_286_all/bscan_dataset.csv   --image_type PAUSradial-pair --epochs 20 --resume checkpoints/PA_encoder_contrastive_best.pth
+python train_encoders.py --modality PA --mode supervised  --csv data/arpam_roi_select_286_all/bscan_dataset.csv   --image_type PAUSradial-pair --epochs 20 --resume checkpoints/PA_encoder_contrastive_best.pth --normal_stats data/normal_stats.json
 ```
 
 Encoder checkpoints are saved to `./checkpoints/`.
@@ -79,7 +91,7 @@ python training.py \
     --us_ckpt checkpoints/US_encoder_supervised_best.pth \
     --image_type PAUSradial-pair \
     --fusion_type cross_attention \
-    --epochs 50 --batch_size 16
+    --epochs 50 --batch_size 16 --normal_stats data/normal_stats.json
 
 # PPO (more stable)
 python training.py \
@@ -88,15 +100,15 @@ python training.py \
     --us_ckpt checkpoints/US_encoder_supervised_best.pth \
     --image_type PAUSradial-pair \
     --fusion_type cross_attention \
-    --epochs 50 --use_ppo
+    --epochs 50 --use_ppo --normal_stats data/normal_stats.json
 
-python training.py --csv data/arpam_roi_select_286_all/bscan_dataset.csv  --pa_ckpt checkpoints/PA_encoder_supervised_best.pth --us_ckpt checkpoints/US_encoder_supervised_best.pth --image_type PAUSradial-pair --fusion_type cross_attention --epochs 50 --use_ppo
+python training.py --csv data/arpam_roi_select_286_all/bscan_dataset.csv  --pa_ckpt checkpoints/PA_encoder_supervised_best.pth --us_ckpt checkpoints/US_encoder_supervised_best.pth --image_type PAUSradial-pair --fusion_type cross_attention --epochs 50 --use_ppo --normal_stats data/normal_stats.json
 
 # Quick sanity check (dummy data, no CSV needed)
 python training.py --dummy --epochs 3 --batch_size 4
 ```
 
-```
+```bash
 # Standard nested structure (date/patient/Tumor/scan/)
 python predict.py ^
     --model_ckpt checkpoints/best_model.pth ^
