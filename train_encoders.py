@@ -75,12 +75,23 @@ def _safe_num_workers(n: int) -> int:
 class ContrastiveWrapper(Dataset):
     """
     Yields (view1, view2, label) for SimCLR pre-training.
-    The augment callable must be picklable (no lambdas).
+
+    For single-modality datasets (x, y)  → uses x directly.
+    For pair datasets    (pa, us, y)     → picks the channel matching `modality`
+                                           so PA contrastive training uses the PA
+                                           image and US training uses the US image.
+
+    Args:
+        base_dataset: ArpamBScanDataset or NormalisedPAUSDataset.
+        augment:      Picklable transform (no lambdas).
+        modality:     'PA' (default) or 'US' — which channel to use from pair data.
     """
 
-    def __init__(self, base_dataset: ArpamBScanDataset, augment: Callable):
-        self.base    = base_dataset
-        self.augment = augment
+    def __init__(self, base_dataset, augment: Callable,
+                 modality: str = "PA"):
+        self.base     = base_dataset
+        self.augment  = augment
+        self.modality = modality   # 'PA' → index 0, 'US' → index 1
 
     def __len__(self) -> int:
         return len(self.base)
@@ -90,7 +101,8 @@ class ContrastiveWrapper(Dataset):
         if len(item) == 2:
             x, y = item
         elif len(item) == 3:
-            x, _, y = item   # pair mode — take first channel (PA)
+            pa, us, y = item
+            x = pa if self.modality == "PA" else us
         else:
             raise ValueError(f"Unexpected item length {len(item)}")
 
@@ -424,24 +436,25 @@ def _build_loaders(
 
     # ── Normal-tissue normalisation path ──────────────────────────────────
     if normal_stats is not None and "pair" in image_type:
-        from normal_normalisation import (
-            load_stats, NormalisedPAUSDataset, ContrastiveWrapper as _CW
-        )
+        # ContrastiveWrapper is defined in THIS file — do not import it from
+        # normal_normalisation (it does not exist there).
+        from normal_normalisation import load_stats, NormalisedPAUSDataset
         stats, fallback = load_stats(normal_stats)
         print(f"  Using Normal-tissue normalisation from {normal_stats}")
 
         if mode == "contrastive":
-            # For contrastive mode wrap NormalisedPAUSDataset
+            # NormalisedPAUSDataset returns (pa, us, y); ContrastiveWrapper
+            # (defined above in this file) takes the first element (PA) and
+            # produces two augmented views for NT-Xent training.
             train_ds_base = NormalisedPAUSDataset(
                 train_df, stats, fallback, image_size, image_type,
                 is_train=True)
             val_ds_base = NormalisedPAUSDataset(
                 val_df, stats, fallback, image_size, image_type,
                 is_train=False)
-            # ContrastiveWrapper takes the first item (PA) for augmentation
             train_tf = build_train_transform(image_size, modality)
-            train_ds = ContrastiveWrapper(train_ds_base, train_tf)
-            val_ds   = ContrastiveWrapper(val_ds_base,   train_tf)
+            train_ds = ContrastiveWrapper(train_ds_base, train_tf, modality)
+            val_ds   = ContrastiveWrapper(val_ds_base,   train_tf, modality)
         else:
             train_ds = NormalisedPAUSDataset(
                 train_df, stats, fallback, image_size, image_type,
@@ -463,8 +476,8 @@ def _build_loaders(
                                        target_type=target_type)
 
         if mode == "contrastive":
-            train_ds = ContrastiveWrapper(train_base, train_tf)
-            val_ds   = ContrastiveWrapper(val_base,   val_tf)
+            train_ds = ContrastiveWrapper(train_base, train_tf, modality)
+            val_ds   = ContrastiveWrapper(val_base,   val_tf,   modality)
         else:
             train_ds = train_base
             val_ds   = val_base

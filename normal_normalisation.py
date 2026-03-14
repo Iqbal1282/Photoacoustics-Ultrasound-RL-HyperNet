@@ -161,7 +161,17 @@ def compute_normal_stats(
     """
     root = Path(data_root)
 
-    # ── Discover patient Normal directories ───────────────────────────────
+    # ── Auto-detect folder depth and discover patient Normal directories ──
+    #
+    # Supported layouts (detected automatically):
+    #
+    #   Shallow  (your data):
+    #       <root>/<patient_id>/<normal_subdir>/<scan_folder>/
+    #       e.g.  data/258/normal/20240509 invivo 258_.../PAradial.tiff
+    #
+    #   Deep  (original assumed layout):
+    #       <root>/<date>/<patient_id>/<normal_subdir>/<scan_folder>/
+    #
     patient_normal_dirs: Dict[str, Path] = {}
 
     if csv_path is not None:
@@ -169,7 +179,7 @@ def compute_normal_stats(
         pids = df["pid"].unique().tolist()
         for pid in pids:
             pid_s = str(pid)
-            # Search up to 2 levels deep
+            # Try shallow first, then deep (one extra level)
             for candidate in [
                 root / pid_s / normal_subdir,
                 *[d / pid_s / normal_subdir
@@ -179,21 +189,29 @@ def compute_normal_stats(
                     patient_normal_dirs[pid_s] = candidate
                     break
     else:
-        for date_folder in sorted(root.iterdir()):
-            if not date_folder.is_dir():
+        for level1 in sorted(root.iterdir()):
+            if not level1.is_dir():
                 continue
-            for patient_folder in sorted(date_folder.iterdir()):
-                if not patient_folder.is_dir():
+            # Shallow: <root>/<patient_id>/normal/
+            ndir_shallow = level1 / normal_subdir
+            if ndir_shallow.exists():
+                patient_normal_dirs[level1.name] = ndir_shallow
+                continue
+            # Deep: <root>/<date>/<patient_id>/normal/
+            for level2 in sorted(level1.iterdir()):
+                if not level2.is_dir():
                     continue
-                ndir = patient_folder / normal_subdir
-                if ndir.exists():
-                    pid = f"{date_folder.name}/{patient_folder.name}"
-                    patient_normal_dirs[pid] = ndir
+                ndir_deep = level2 / normal_subdir
+                if ndir_deep.exists():
+                    pid = f"{level1.name}/{level2.name}"
+                    patient_normal_dirs[pid] = ndir_deep
 
     if not patient_normal_dirs:
         raise RuntimeError(
             f"No '{normal_subdir}' folders found under {root}.\n"
-            f"Expected:  <root>/<date>/<patient>/{normal_subdir}/<scan>/\n"
+            f"Tried both layouts:\n"
+            f"  Shallow: <root>/<patient_id>/{normal_subdir}/<scan>/\n"
+            f"  Deep:    <root>/<date>/<patient_id>/{normal_subdir}/<scan>/\n"
             f"Check --data_root and --normal_subdir."
         )
 
@@ -625,16 +643,24 @@ def main():
     if args.dry_run:
         root = Path(args.data_root)
         count = 0
-        for date_folder in sorted(root.iterdir()):
-            if not date_folder.is_dir():
+        for level1 in sorted(root.iterdir()):
+            if not level1.is_dir():
                 continue
-            for patient_folder in sorted(date_folder.iterdir()):
-                if not patient_folder.is_dir():
+            # Shallow layout: <root>/<patient>/normal/
+            ndir = level1 / args.normal_subdir
+            if ndir.exists():
+                n_scans = sum(1 for d in ndir.iterdir() if d.is_dir())
+                print(f"  [shallow] {level1.name:30s} → {n_scans} scan folder(s)")
+                count += 1
+                continue
+            # Deep layout: <root>/<date>/<patient>/normal/
+            for level2 in sorted(level1.iterdir()):
+                if not level2.is_dir():
                     continue
-                ndir = patient_folder / args.normal_subdir
+                ndir = level2 / args.normal_subdir
                 if ndir.exists():
                     n_scans = sum(1 for d in ndir.iterdir() if d.is_dir())
-                    print(f"  {date_folder.name}/{patient_folder.name:25s} "
+                    print(f"  [deep]    {level1.name}/{level2.name:20s} "
                           f"→ {n_scans} scan folder(s)")
                     count += 1
         print(f"\n{count} patient(s) with '{args.normal_subdir}' folders found.")

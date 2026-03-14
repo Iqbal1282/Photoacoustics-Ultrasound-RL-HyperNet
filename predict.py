@@ -334,30 +334,57 @@ def run_nested(
     visualise: bool = False,
     vis_dir: Optional[Path] = None,
 ) -> List[Dict]:
-    """Walk  root_dir/<date>/<patient>/<scan_subdir>/<scan>/."""
+    """
+    Walk the data root looking for  <scan_subdir>/<scan>/  folders.
+
+    Supports two layouts automatically:
+
+      Shallow  (your data):
+          <root>/<patient_id>/<scan_subdir>/<scan>/
+          e.g.  data/258/tumor/20240509 invivo 258_.../
+
+      Deep:
+          <root>/<date>/<patient_id>/<scan_subdir>/<scan>/
+
+    The patient_id used for normalisation lookup is always the bare
+    patient folder name (e.g. "258") so it matches the pid in normal_stats.json.
+    """
     results = []
-    for date_folder in sorted(root_dir.iterdir()):
-        if not date_folder.is_dir():
+
+    for level1 in sorted(root_dir.iterdir()):
+        if not level1.is_dir():
             continue
-        for patient_folder in sorted(date_folder.iterdir()):
-            if not patient_folder.is_dir():
-                continue
-            subdir = patient_folder / scan_subdir
-            if not subdir.exists():
-                continue
 
-            patient_id = f"{date_folder.name}/{patient_folder.name}"
+        # ── Shallow layout: <root>/<patient_id>/<scan_subdir>/ ───────────
+        subdir_shallow = level1 / scan_subdir
+        if subdir_shallow.exists():
+            patient_id = level1.name          # e.g. "258"
             print(f"\nPatient: {patient_id}")
-
-            # ── Update per-patient normalisation ─────────────────────────
             pa_preprocessor.set_patient(patient_id)
             us_preprocessor.set_patient(patient_id)
-
             results.extend(_process_scan_folder(
-                subdir, patient_id, model,
+                subdir_shallow, patient_id, model,
                 pa_preprocessor, us_preprocessor,
                 device, class_names, visualise, vis_dir,
             ))
+            continue
+
+        # ── Deep layout: <root>/<date>/<patient_id>/<scan_subdir>/ ───────
+        for level2 in sorted(level1.iterdir()):
+            if not level2.is_dir():
+                continue
+            subdir_deep = level2 / scan_subdir
+            if subdir_deep.exists():
+                patient_id = level2.name      # bare patient name
+                print(f"\nPatient: {patient_id}  (date: {level1.name})")
+                pa_preprocessor.set_patient(patient_id)
+                us_preprocessor.set_patient(patient_id)
+                results.extend(_process_scan_folder(
+                    subdir_deep, f"{level1.name}/{level2.name}", model,
+                    pa_preprocessor, us_preprocessor,
+                    device, class_names, visualise, vis_dir,
+                ))
+
     return results
 
 
