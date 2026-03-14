@@ -1,0 +1,61 @@
+# ============================================================
+# Configuration — PA+US RL-HyperNet
+# ============================================================
+
+# ── Data ────────────────────────────────────────────────────
+csv: "~/data/arpam_roi_select_281/bscan_dataset.csv"
+image_type: "PAUSradial-pair"   # or "PAUSrect-pair"
+image_size: [512, 512]
+in_channels: 1                  # 1=grayscale, 3=force_3chan
+target_type: "response"         # "response" (binary) | "pathology" (T,TRG)
+val_fraction: 0.15
+test_fraction: 0.15
+batch_size: 16
+num_workers: 4
+
+# ── Encoder checkpoints ─────────────────────────────────────
+# Set to null to use randomly-initialised (ImageNet-pretrained) encoders.
+pa_ckpt: "./checkpoints/PA_encoder_supervised_best.pth"
+us_ckpt: "./checkpoints/US_encoder_supervised_best.pth"
+
+# ── Model architecture ──────────────────────────────────────
+feat_dim: 256         # Encoder embedding dimension
+z_dim: 32            # RL latent code dimension
+num_classes: 2       # 2 for binary tumour / no-tumour
+fusion_type: "cross_attention"   # "concat" | "cross_attention"
+hidden_dim: 128      # MLP hidden size in policy + hypernet
+
+# ── RL-HyperNet training ────────────────────────────────────
+epochs: 50
+lr: 0.0001
+beta: 0.1            # Weight of RL loss versus CE loss
+
+# PPO-specific (ignored when use_ppo: false)
+use_ppo: true
+clip_epsilon: 0.2
+value_coef: 0.5
+entropy_coef: 0.01
+
+# ── Encoder pre-training (train_encoders.py) ────────────────
+encoder_pretraining:
+  mode: "supervised"       # "supervised" | "contrastive"
+  epochs: 50
+  lr: 0.0003
+  weight_decay: 0.0001
+  batch_size: 16
+  temperature: 0.07        # NT-Xent τ (contrastive mode only)
+  feat_dim: 256
+  in_channels: 1
+  pretrained: true         # Start from ImageNet ResNet-18
+
+# ── Device & reproducibility ────────────────────────────────
+device: "cuda"
+seed: 42
+
+# ── Checkpointing ───────────────────────────────────────────
+save_dir: "./checkpoints"
+
+# ── Logging ─────────────────────────────────────────────────
+use_wandb: false
+wandb_project: "paus-rl-hypernet"
+wandb_entity: null
