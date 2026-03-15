@@ -711,9 +711,7 @@ def main():
     us_pre = InferencePreprocessor(image_size, modality="US")
 
     # ── Run inference ─────────────────────────────────────────────────────
-    #root_dir = Path(args.data_root)
-    root_path_str = r'\\10.229.121.108\Workspace\ARPAM\System2\invivo'
-    root_dir = Path(root_path_str)
+    root_dir = Path(args.data_root)
     vis_dir  = Path(args.vis_dir) if args.visualise else None
 
     global _THRESHOLD

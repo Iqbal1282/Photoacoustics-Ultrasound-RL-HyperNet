@@ -350,13 +350,24 @@ class FusionTrainer:
             "_cm":          cm,
         }
 
-    def train(self, num_epochs: int, save_dir: str = "./checkpoints"):
+    def train(self, num_epochs: int, save_dir: str = "./checkpoints",
+             ckpt_name: str = "best_fusion_model.pth",
+             smoothing_window: int = 3):
+        """
+        Args:
+            smoothing_window: Number of recent epochs to average AUC over
+                              before deciding to save a checkpoint.
+                              Default 3 reduces sensitivity to single lucky
+                              epochs on small val sets.
+        """
         save_path = Path(save_dir)
         save_path.mkdir(parents=True, exist_ok=True)
-        best_auc = 0.0
+        best_smoothed_auc = 0.0
+        auc_history: List[float] = []
 
         print(f"\n{'='*60}")
-        print(f"Fusion Ablation Training  ({num_epochs} epochs)")
+        print(f"Fusion Training  ({num_epochs} epochs, "
+              f"AUC smoothing window={smoothing_window})")
         print(f"{'='*60}\n")
 
         for epoch in range(1, num_epochs + 1):
@@ -365,17 +376,24 @@ class FusionTrainer:
             val_m   = self.validate()
             self.scheduler.step()
 
-            cm = val_m.pop("_cm")
+            cm  = val_m.pop("_cm")
+            auc = val_m["val/auc"]
+            auc_history.append(auc)
+
+            # Smoothed AUC = mean of last `smoothing_window` epochs
+            smoothed = float(np.mean(auc_history[-smoothing_window:]))
+            val_m["val/auc_smoothed"] = smoothed
+
             print(f"  E{epoch:>2}  "
                   f"loss={train_m['train/loss']:.4f}  "
                   f"acc={train_m['train/accuracy']:.1f}%  ||  "
                   f"val_loss={val_m['val/loss']:.4f}  "
                   f"val_acc={val_m['val/accuracy']:.1f}%  "
-                  f"AUC={val_m['val/auc']:.4f}  "
+                  f"AUC={auc:.4f}  smooth={smoothed:.4f}  "
                   f"F1={val_m['val/f1']:.4f}")
             if cm is not None:
-                print(f"       Confusion matrix (rows=true, cols=pred):\n"
-                      f"         {cm}")
+                print(f"       CM: {cm.ravel().tolist()}  "
+                      f"[TN FP FN TP]")
 
             if self.use_wandb:
                 import wandb
@@ -383,20 +401,22 @@ class FusionTrainer:
                            "lr": self.optimizer.param_groups[0]["lr"]},
                           step=epoch)
 
-            if val_m["val/auc"] > best_auc:
-                best_auc = val_m["val/auc"]
+            # Save based on smoothed AUC — prevents saving on single lucky epochs
+            if smoothed > best_smoothed_auc and epoch >= smoothing_window:
+                best_smoothed_auc = smoothed
                 torch.save({
                     "epoch":            epoch,
                     "model_state_dict": self.model.state_dict(),
-                    "val_auc":          best_auc,
+                    "val_auc":          auc,
+                    "val_auc_smoothed": smoothed,
                     "val_accuracy":     val_m["val/accuracy"],
                     "metrics":          {**train_m, **val_m},
-                }, save_path / "best_fusion_model.pth")
-                print(f"  ✓ New best AUC={best_auc:.4f}  "
-                      f"acc={val_m['val/accuracy']:.1f}%")
+                }, save_path / ckpt_name)
+                print(f"  ✓ New best smoothed AUC={smoothed:.4f}  "
+                      f"(raw={auc:.4f})  acc={val_m['val/accuracy']:.1f}%")
 
-        print(f"\nDone.  Best val AUC: {best_auc:.4f}")
-        print(f"Checkpoint: {save_path/'best_fusion_model.pth'}\n")
+        print(f"\nDone.  Best smoothed val AUC: {best_smoothed_auc:.4f}")
+        print(f"Checkpoint: {save_path/ckpt_name}\n")
 
 
 # =============================================================================
@@ -430,9 +450,13 @@ def parse_args() -> argparse.Namespace:
                         "Lower than before to prevent epoch-1 overfit.")
     p.add_argument("--weight_decay",    type=float, default=1e-3,
                    help="L2 regularisation (default: 1e-3, stronger than before).")
-    p.add_argument("--unfreeze_epoch",  type=int,   default=10,
+    p.add_argument("--unfreeze_epoch",  type=int,   default=20,
                    help="Epoch at which to unfreeze encoder last layer "
-                        "(default: 10). Set to 0 to keep encoders fully frozen.")
+                        "(default: 20, after fusion head has converged). "
+                        "Set to 0 to keep encoders fully frozen.")
+    p.add_argument("--smoothing_window",type=int,   default=3,
+                   help="Epochs to average AUC over for checkpoint selection "
+                        "(default: 3). Higher = less sensitive to lucky epochs.")
     p.add_argument("--encoder_lr_scale",type=float, default=0.1,
                    help="Encoder LR = lr × scale (default: 0.1 = 10× lower).")
     p.add_argument("--threshold",    type=float, default=0.3)
@@ -571,7 +595,8 @@ def main():
         encoder_lr_scale=args.encoder_lr_scale,
         use_wandb=args.use_wandb,
     )
-    trainer.train(num_epochs=args.epochs, save_dir=args.save_dir)
+    trainer.train(num_epochs=args.epochs, save_dir=args.save_dir,
+                 smoothing_window=args.smoothing_window)
 
     # ── Test ──────────────────────────────────────────────────────────────
     best_path = Path(args.save_dir) / "best_fusion_model.pth"
