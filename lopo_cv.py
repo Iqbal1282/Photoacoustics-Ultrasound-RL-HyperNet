@@ -157,6 +157,7 @@ def train_one_fold(
     device: torch.device,
     model_type: str = "fusion",
     hypernet_hidden: int = 64,
+    ctx_dim: int = 64,
 ) -> PAUSFusionClassifier:
     """Train one fold and return the best-val-AUC model."""
 
@@ -175,7 +176,17 @@ def train_one_fold(
         us_enc.load_state_dict(ckpt["encoder_state_dict"], strict=False)
         us_enc.detach_projection_head()
 
-    if model_type == "fusion_hypernet":
+    if model_type == "fusion_hypernet_v2":
+        from train_fusion_hypernet_v2 import PAUSFusionHyperNetV2
+        model = PAUSFusionHyperNetV2(
+            pa_encoder=pa_enc, us_encoder=us_enc,
+            feat_dim=feat_dim, num_classes=2,
+            fusion_type=fusion_type,
+            ctx_dim=hypernet_hidden,
+            hypernet_hidden=hypernet_hidden,
+            dropout=dropout,
+        ).to(device)
+    elif model_type == "fusion_hypernet":
         from train_fusion_hypernet import PAUSFusionHyperNet
         model = PAUSFusionHyperNet(
             pa_encoder=pa_enc, us_encoder=us_enc,
@@ -207,7 +218,16 @@ def train_one_fold(
     criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.1)
 
     # Optimizer: different param groups depending on model type
-    if model_type == "fusion_hypernet":
+    if model_type == "fusion_hypernet_v2":
+        trainable = [
+            {"params": model.gate.parameters(),           "lr": lr},
+            {"params": model.fusion.parameters(),          "lr": lr},
+            {"params": model.context_encoder.parameters(), "lr": lr},
+            {"params": model.hypernet.parameters(),        "lr": lr},
+            {"params": model.adaptive_cls.parameters(),    "lr": lr},
+            {"params": model.base_cls.parameters(),        "lr": lr * 2},
+        ]
+    elif model_type == "fusion_hypernet":
         trainable = [
             {"params": model.fusion.parameters(),     "lr": lr},
             {"params": model.pre_hyper.parameters(),  "lr": lr},
@@ -355,8 +375,10 @@ def run_lopo(args) -> pd.DataFrame:
     print(f"\n{'='*60}")
     print(f"Leave-One-Patient-Out Cross-Validation")
     print(f"  Patients   : {len(all_pids)}")
-    model_label = ("PAUSFusionHyperNet" if args.model == "fusion_hypernet"
-                   else "PAUSFusionClassifier")
+    model_label = (
+        "PAUSFusionHyperNetV2" if args.model == "fusion_hypernet_v2" else
+        "PAUSFusionHyperNet"   if args.model == "fusion_hypernet" else
+        "PAUSFusionClassifier")
     print(f"  Model      : {model_label} ({args.fusion_type})")
     print(f"  Epochs/fold: {args.epochs}")
     print(f"  Threshold  : {args.threshold}")
@@ -398,6 +420,7 @@ def run_lopo(args) -> pd.DataFrame:
             device=device,
             model_type=args.model,
             hypernet_hidden=args.hypernet_hidden,
+            ctx_dim=args.ctx_dim,
         )
 
         rows = evaluate_fold(model, test_loader, test_pid,
@@ -533,10 +556,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--num_workers",      type=int,   default=4)
     p.add_argument("--seed",             type=int,   default=42)
     p.add_argument("--model",            type=str,   default="fusion",
-                   choices=["fusion", "fusion_hypernet"],
+                   choices=["fusion", "fusion_hypernet", "fusion_hypernet_v2"],
                    help="Model type: 'fusion' (linear head) or "
                         "'fusion_hypernet' (HyperNet head, no RL)")
     p.add_argument("--hypernet_hidden",  type=int,   default=64)
+    p.add_argument("--ctx_dim",          type=int,   default=64,
+                   help="Context bottleneck dim for v2 model")
+    p.add_argument("--gate_hidden",      type=int,   default=32)
     p.add_argument("--device",           type=str,   default="cuda")
     p.add_argument("--out",              type=str,   default="results/lopo",
                    help="Output directory for CSV results")

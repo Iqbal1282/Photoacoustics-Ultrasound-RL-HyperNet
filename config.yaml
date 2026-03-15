@@ -56,6 +56,6 @@ seed: 42
 save_dir: "./checkpoints"
 
 # ── Logging ─────────────────────────────────────────────────
-use_wandb: true
+use_wandb: false
 wandb_project: "paus-rl-hypernet"
 wandb_entity: null
