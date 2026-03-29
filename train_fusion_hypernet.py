@@ -51,6 +51,9 @@ python lopo_cv.py ^
     --model fusion_hypernet ^
     --epochs 30 --batch_size 8 ^
     --out results/lopo_hypernet
+
+
+python train_fusion_hypernet.py --csv  data/arpam_roi_select_286_all/bscan_dataset.csv --pa_ckpt checkpoints/PA_encoder_supervised_best.pth --us_ckpt checkpoints/US_encoder_supervised_best.pth --normal_stats data/normal_stats.json --epochs 50 --batch_size 8
 """
 
 from __future__ import annotations

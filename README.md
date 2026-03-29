@@ -62,8 +62,8 @@ python train_encoders.py \
     --csv data/arpam_roi_select_286_all/bscan_dataset.csv \
     --image_type PAUSradial-pair --epochs 100 --normal_stats data/normal_stats.json
 
-python train_encoders.py --modality PA --mode contrastive --csv ~/data/arpam_roi_select_286_all/bscan_dataset.csv --image_type PAUSradial-pair --epochs 100 --normal_stats data/normal_stats.json
-python train_encoders.py --modality US --mode contrastive --csv ~/data/arpam_roi_select_286_all/bscan_dataset.csv --image_type PAUSradial-pair --epochs 100 --normal_stats data/normal_stats.json
+python train_encoders.py --modality PA --mode contrastive --csv data/arpam_roi_select_286_all/bscan_dataset.csv --image_type PAUSradial-pair --epochs 100 --normal_stats data/normal_stats.json
+python train_encoders.py --modality US --mode contrastive --csv data/arpam_roi_select_286_all/bscan_dataset.csv --image_type PAUSradial-pair --epochs 100 --normal_stats data/normal_stats.json
 
 # Fine-tune with labels
 python train_encoders.py \
