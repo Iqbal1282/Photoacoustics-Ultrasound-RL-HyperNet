@@ -66,6 +66,7 @@ if _pkg_dir not in sys.path:
     sys.path.insert(0, _pkg_dir)
 
 from encoders import PAEncoder, USEncoder
+from encoders_v2 import PAEncoderV2 as PAEncoder, USEncoderV2 as USEncoder
 from train_fusion_hypernet_v2 import (
     PAUSFusionHyperNetV2,
     predict_with_uncertainty,

@@ -98,6 +98,7 @@ if _pkg_dir not in sys.path:
     sys.path.insert(0, _pkg_dir)
 
 from encoders import PAEncoder, USEncoder, PAUSEncoderPair
+from encoders_v2 import PAEncoderV2 as PAEncoder, USEncoderV2 as USEncoder
 from models import (CrossModalAttentionFusion, ConcatFusion,
                     HyperNetwork, AdaptiveClassifier)
 from dataset import PAUSBScanDataset, stratified_patient_split

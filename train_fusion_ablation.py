@@ -402,7 +402,7 @@ class FusionTrainer:
                           step=epoch)
 
             # Save based on smoothed AUC — prevents saving on single lucky epochs
-            if smoothed > best_smoothed_auc:
+            if smoothed > best_smoothed_auc and epoch >= smoothing_window:
                 best_smoothed_auc = smoothed
                 torch.save({
                     "epoch":            epoch,
